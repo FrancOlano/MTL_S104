@@ -149,6 +149,88 @@
             display: inline-block;
             vertical-align: middle;
         }
+
+        .recording-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            min-height: 150px;
+            justify-content: center;
+        }
+
+        .record-button {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background-color: #000000;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            position: relative;
+        }
+
+        .record-button:hover {
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+            transform: scale(1.05);
+        }
+
+        .record-button:active {
+            transform: scale(0.98);
+        }
+
+        .record-button-dot {
+            width: 60px;
+            height: 60px;
+            background-color: #ef5350;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+        }
+
+        .record-button.recording .record-button-dot {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 83, 80, 0.7);
+            }
+            50% {
+                box-shadow: 0 0 0 15px rgba(239, 83, 80, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 83, 80, 0);
+            }
+        }
+
+        #waveformCanvas {
+            width: 120px;
+            height: 120px;
+            border-radius: 8px;
+            background-color: #1a1a1a;
+            display: none;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s ease;
+        }
+
+        #waveformCanvas.show {
+            display: block;
+        }
+
+        #waveformCanvas:hover {
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+            transform: scale(1.05);
+        }
+
+        #waveformCanvas:active {
+            transform: scale(0.98);
+        }
     </style>
 </head>
 <body>
@@ -167,9 +249,11 @@
         <!-- Audio Recording Section -->
         <div class="section">
             <h2>Audio Recorder</h2>
-            <div class="button-group">
-                <button id="startRecordBtn" class="record-btn">Start Recording</button>
-                <button id="stopRecordBtn" class="record-btn stop-btn" disabled>Stop Recording</button>
+            <div class="recording-container">
+                <button id="recordBtn" class="record-button">
+                    <div class="record-button-dot"></div>
+                </button>
+                <canvas id="waveformCanvas" width="120" height="120"></canvas>
             </div>
             <div id="recordingStatus" class="response">
                 <div id="recordingMessage" class="message"></div>
@@ -181,11 +265,21 @@
         const fetchBtn = document.getElementById('fetchBtn');
         const responseDiv = document.getElementById('response');
         const messageDiv = document.getElementById('message');
-        const startRecordBtn = document.getElementById('startRecordBtn');
-        const stopRecordBtn = document.getElementById('stopRecordBtn');
+        const recordBtn = document.getElementById('recordBtn');
+        const canvas = document.getElementById('waveformCanvas');
+        const canvasCtx = canvas.getContext('2d');
         const recordingStatusDiv = document.getElementById('recordingStatus');
         const recordingMessageDiv = document.getElementById('recordingMessage');
         const API_URL = 'http://localhost:8000';
+
+        // Audio visualization variables
+        let audioContext = null;
+        let analyser = null;
+        let mediaStream = null;
+        let isRecording = false;
+        let animationId = null;
+        let waveformHistory = [];
+        const MAX_HISTORY = 60;
 
         /**
          * Fetches the hello world message from the FastAPI backend
@@ -230,80 +324,189 @@
         }
 
         /**
-         * Starts audio recording on the backend
+         * Initializes the Web Audio API for waveform visualization
          */
-        async function startRecording() {
+        async function initializeAudioContext() {
+            if (audioContext) return;
+
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+
             try {
-                startRecordBtn.disabled = true;
-                recordingStatusDiv.classList.remove('error', 'success');
-                recordingStatusDiv.classList.add('show');
-                recordingMessageDiv.textContent = 'Starting recording...';
-
-                const response = await fetch(`${API_URL}/start-recording`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to start recording');
-                }
-
-                recordingStatusDiv.classList.add('success');
-                recordingMessageDiv.textContent = '🔴 Recording... (click Stop to finish)';
-                stopRecordBtn.disabled = false;
-
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                source.connect(analyser);
             } catch (error) {
-                console.error('Error:', error);
-                recordingStatusDiv.classList.add('error');
-                recordingMessageDiv.textContent = `✗ Error: ${error.message}`;
-                startRecordBtn.disabled = false;
+                console.error('Error accessing microphone:', error);
+                recordingStatusDiv.classList.add('show', 'error');
+                recordingMessageDiv.textContent = '✗ Microphone access denied';
+                isRecording = false;
+                recordBtn.classList.remove('recording');
+                throw error;
             }
         }
 
         /**
-         * Stops audio recording and saves the file
+         * Draws the waveform on the circular canvas
          */
-        async function stopRecording() {
-            try {
-                stopRecordBtn.disabled = true;
-                recordingMessageDiv.textContent = 'Stopping recording and saving file...';
+        function drawWaveform() {
+            if (!analyser) return;
 
-                const response = await fetch(`${API_URL}/stop-recording`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                });
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
 
-                const data = await response.json();
+            // Calculate average amplitude
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / bufferLength;
 
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to stop recording');
+            // Add to history
+            waveformHistory.push(average);
+            if (waveformHistory.length > MAX_HISTORY) {
+                waveformHistory.shift();
+            }
+
+            // Clear canvas
+            canvasCtx.fillStyle = '#1a1a1a';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw scrolling waveform bars
+            const barWidth = Math.max(1, canvas.width / MAX_HISTORY);
+            const barGap = 1;
+            const maxBarHeight = canvas.height * 0.85;
+            const centerY = canvas.height / 2;
+
+            waveformHistory.forEach((level, index) => {
+                const barHeight = (level / 255) * maxBarHeight;
+                const x = (index / MAX_HISTORY) * canvas.width;
+                const barY = centerY - barHeight / 2;
+
+                // Create gradient for each bar
+                const gradient = canvasCtx.createLinearGradient(x, barY, x, barY + barHeight);
+                gradient.addColorStop(0, '#667eea');
+                gradient.addColorStop(1, '#764ba2');
+
+                // Add fade effect on left side
+                const alpha = index / MAX_HISTORY;
+                canvasCtx.globalAlpha = Math.max(0.3, alpha);
+                canvasCtx.fillStyle = gradient;
+                canvasCtx.fillRect(x, barY, barWidth - barGap, barHeight);
+                canvasCtx.globalAlpha = 1;
+            });
+
+            if (isRecording) {
+                animationId = requestAnimationFrame(drawWaveform);
+            }
+        }
+
+        /**
+         * Toggles recording on/off
+         */
+        async function toggleRecording() {
+            if (!isRecording) {
+                // Start recording
+                try {
+                    recordBtn.disabled = true;
+                    recordingStatusDiv.classList.remove('error', 'success');
+                    recordingStatusDiv.classList.add('show');
+                    recordingMessageDiv.textContent = 'Starting recording...';
+
+                    // Initialize audio context
+                    await initializeAudioContext();
+
+                    // Start backend recording
+                    const response = await fetch(`${API_URL}/start-recording`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.message || 'Failed to start recording');
+                    }
+
+                    isRecording = true;
+                    recordBtn.style.display = 'none';
+                    canvas.classList.add('show');
+                    recordBtn.disabled = false;
+                    recordingStatusDiv.classList.add('success');
+                    recordingMessageDiv.textContent = '🔴 Recording... (click to stop)';
+                    waveformHistory = [];
+
+                    // Start waveform animation
+                    drawWaveform();
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    recordingStatusDiv.classList.add('error');
+                    recordingMessageDiv.textContent = `✗ Error: ${error.message}`;
+                    recordBtn.disabled = false;
+                    isRecording = false;
                 }
 
-                recordingStatusDiv.classList.remove('error');
-                recordingStatusDiv.classList.add('success');
-                recordingMessageDiv.textContent = `✓ Recording saved: ${data.filename}`;
-                startRecordBtn.disabled = false;
+            } else {
+                // Stop recording
+                try {
+                    recordBtn.disabled = true;
+                    recordingMessageDiv.textContent = 'Stopping recording and saving file...';
 
-            } catch (error) {
-                console.error('Error:', error);
-                recordingStatusDiv.classList.add('error');
-                recordingStatusDiv.classList.remove('success');
-                recordingMessageDiv.textContent = `✗ Error: ${error.message}`;
-                startRecordBtn.disabled = false;
-                stopRecordBtn.disabled = false;
+                    // Stop waveform animation
+                    if (animationId) {
+                        cancelAnimationFrame(animationId);
+                        animationId = null;
+                    }
+
+                    // Stop backend recording
+                    const response = await fetch(`${API_URL}/stop-recording`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.message || 'Failed to stop recording');
+                    }
+
+                    isRecording = false;
+                    canvas.classList.remove('show');
+                    recordBtn.style.display = 'flex';
+                    recordingStatusDiv.classList.remove('error');
+                    recordingStatusDiv.classList.add('success');
+                    recordingMessageDiv.textContent = `✓ Recording saved: ${data.filename}`;
+                    recordBtn.disabled = false;
+
+                    // Clean up audio context
+                    if (mediaStream) {
+                        mediaStream.getTracks().forEach(track => track.stop());
+                    }
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    recordingStatusDiv.classList.add('error');
+                    recordingStatusDiv.classList.remove('success');
+                    recordingMessageDiv.textContent = `✗ Error: ${error.message}`;
+                    isRecording = false;
+                    canvas.classList.remove('show');
+                    recordBtn.style.display = 'flex';
+                    recordBtn.disabled = false;
+                }
             }
         }
 
         // Add event listeners
         fetchBtn.addEventListener('click', fetchHelloWorld);
-        startRecordBtn.addEventListener('click', startRecording);
-        stopRecordBtn.addEventListener('click', stopRecording);
+        recordBtn.addEventListener('click', toggleRecording);
+        canvas.addEventListener('click', toggleRecording);
     </script>
 </body>
 </html>

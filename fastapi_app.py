@@ -20,7 +20,7 @@ app.add_middleware(
 
 # Audio recording configuration
 CHUNK = 1024
-FORMAT = pyaudio.paFloat32
+FORMAT = pyaudio.paInt16 
 CHANNELS = 1
 RATE = 44100
 RECORDINGS_DIR = "recordings"
