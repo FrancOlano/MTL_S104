@@ -149,6 +149,39 @@
             display: inline-block;
             vertical-align: middle;
         }
+
+        .model-selector-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            max-width: 300px;
+            margin: 0 auto;
+            text-align: left;
+        }
+
+        .model-selector-container label {
+            color: #555;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .model-selector-container select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #d9d9e8;
+            border-radius: 8px;
+            font-size: 15px;
+            color: #333;
+            background-color: #fff;
+            cursor: pointer;
+        }
+
+        .model-selector-container select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
     </style>
 </head>
 <body>
@@ -178,6 +211,21 @@
             </div>
         </div>
 
+        <!-- Model Selector Section -->
+        <div class="section">
+            <h2>Model Selector</h2>
+            <div class="model-selector-container">
+                <label for="modelSelect">Transcription Model</label>
+                <select id="modelSelect" name="model">
+                    {% for model in transcription_models %}
+                    <option value="{{ model.value }}" {% if model.value == default_transcription_model %}selected{% endif %}>
+                        {{ model.label }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
         <div class="midi-controls">
             <button id="playBtn" type="button" aria-label="Play" title="Play">&#9654;</button>
             <button id="pauseBtn" type="button" aria-label="Pause" title="Pause">&#10074;&#10074;</button>
@@ -198,9 +246,19 @@
         const recordBtn = document.getElementById('recordBtn');
         const canvas = document.getElementById('waveformCanvas');
         const canvasCtx = canvas.getContext('2d');
+        const modelSelect = document.getElementById('modelSelect');
         const recordingStatusDiv = document.getElementById('recordingStatus');
         const recordingMessageDiv = document.getElementById('recordingMessage');
         const API_URL = 'http://localhost:8000';
+        let selectedModel = modelSelect.value;
+
+        // Expose selected model for the transcribe flow integration
+        window.selectedModel = selectedModel;
+
+        modelSelect.addEventListener('change', (event) => {
+            selectedModel = event.target.value;
+            window.selectedModel = selectedModel;
+        });
 
         /**
          * Fetches the hello world message from the FastAPI backend
