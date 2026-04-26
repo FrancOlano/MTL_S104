@@ -1,1 +1,7 @@
 recordings
+__pycache__
+
+# Model checkpoints
+checkpoint_50000.pt
+*.pt
+*.pth
