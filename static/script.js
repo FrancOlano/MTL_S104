@@ -1,5 +1,4 @@
 // DOM Elements
-const fetchBtn = document.getElementById('fetchBtn');
 const playBtn = document.getElementById('playBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -33,47 +32,6 @@ modelSelect.addEventListener('change', (event) => {
     window.selectedModel = selectedModel;
 });
 
-/**
- * Fetches the hello world message from the FastAPI backend
- */
-async function fetchHelloWorld() {
-    try {
-        // Disable button and show loading state
-        fetchBtn.disabled = true;
-        fetchBtn.innerHTML = '<span class="loading"></span><span class="loading-text">Loading...</span>';
-
-        // Make API request
-        const response = await fetch(`${API_URL}/`, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-        });
-
-        // Check if response is ok
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        // Parse JSON response
-        const data = await response.json();
-
-        // Display success message
-        responseDiv.classList.add('show', 'success');
-        messageDiv.textContent = `✓ ${data.message}`;
-
-    } catch (error) {
-        // Handle errors
-        console.error('Error:', error);
-        responseDiv.classList.add('show', 'error');
-        messageDiv.textContent = `✗ Error: ${error.message}. Make sure the FastAPI server is running on http://localhost:8000`;
-
-    } finally {
-        // Re-enable button and restore text
-        fetchBtn.disabled = false;
-        fetchBtn.innerHTML = 'Fetch Message';
-    }
-}
 
 /**
  * Initializes the Web Audio API for waveform visualization
@@ -261,6 +219,5 @@ async function toggleRecording() {
 }
 
 // Add event listeners
-fetchBtn.addEventListener('click', fetchHelloWorld);
 recordBtn.addEventListener('click', toggleRecording);
 canvas.addEventListener('click', toggleRecording);
