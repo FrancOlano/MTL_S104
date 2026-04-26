@@ -222,6 +222,187 @@ async function toggleRecording() {
 recordBtn.addEventListener('click', toggleRecording);
 canvas.addEventListener('click', toggleRecording);
 
+
+
+// Audio to MIDI Transcription Code
+
+const convertBtn = document.getElementById('convertBtn');
+const transcriptionStatusDiv = document.getElementById('transcriptionStatus');
+const transcriptionMessageDiv = document.getElementById('transcriptionMessage');
+const downloadMidiLink = document.getElementById('downloadMidiLink');
+
+let audioFileForTranscription = null;
+let currentMidiBlob = null;
+let currentMidiUrl = null;
+let synth = null;
+
+
+
+window.setAudioFileForTranscription = function(file) {
+    audioFileForTranscription = file;
+};
+
+
+/**
+ * Shows transcription status messages.
+ */
+function setTranscriptionMessage(message, type = '') {
+    transcriptionStatusDiv.classList.remove('error', 'success', 'loading');
+    transcriptionStatusDiv.classList.add('show');
+
+    if (type) {
+        transcriptionStatusDiv.classList.add(type);
+    }
+
+    transcriptionMessageDiv.textContent = message;
+}
+
+
+/**
+ * Clears the previous MIDI file.
+ */
+function clearMidiDownload() {
+    downloadMidiLink.style.display = 'none';
+    downloadMidiLink.removeAttribute('href');
+
+    if (currentMidiUrl) {
+        URL.revokeObjectURL(currentMidiUrl);
+        currentMidiUrl = null;
+    }
+
+    currentMidiBlob = null;
+}
+
+
+/**
+ * Calls FastAPI /transcribe endpoint.
+ */
+async function transcribeAudio() {
+    clearMidiDownload();
+
+    if (!audioFileForTranscription) {
+        setTranscriptionMessage(
+            'No audio file selected yet. The upload component must provide the file first.',
+            'error'
+        );
+        return;
+    }
+
+    const selectedModel = modelSelect.value;
+
+    const formData = new FormData();
+    formData.append('audio', audioFileForTranscription);
+    formData.append('model', selectedModel);
+
+    convertBtn.disabled = true;
+    setTranscriptionMessage('Converting audio to MIDI...', 'loading');
+
+    try {
+        const response = await fetch(`${API_URL}/transcribe`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            let errorMessage = 'Transcription failed.';
+
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || errorMessage;
+            } catch {
+                errorMessage = await response.text();
+            }
+
+            throw new Error(errorMessage);
+        }
+
+        currentMidiBlob = await response.blob();
+        currentMidiUrl = URL.createObjectURL(currentMidiBlob);
+
+        downloadMidiLink.href = currentMidiUrl;
+        downloadMidiLink.download = `transcription_${selectedModel}.mid`;
+        downloadMidiLink.style.display = 'inline-block';
+
+        setTranscriptionMessage('✓ MIDI generated successfully.', 'success');
+
+    } catch (error) {
+        console.error('Transcription error:', error);
+        setTranscriptionMessage(`✗ Error: ${error.message}`, 'error');
+    } finally {
+        convertBtn.disabled = false;
+    }
+}
+
+
+/**
+ * Loads a MIDI file from the generated Blob.
+ */
+async function loadMidiFromBlob(midiBlob) {
+    const arrayBuffer = await midiBlob.arrayBuffer();
+    return new Midi(arrayBuffer);
+}
+
+
+/**
+ * Stops MIDI playback.
+ */
+function stopMidiPlayback() {
+    Tone.Transport.stop();
+    Tone.Transport.cancel();
+
+    if (synth) {
+        synth.releaseAll();
+    }
+}
+
+
+/**
+ * Plays the generated MIDI.
+ */
+async function playMidi() {
+    if (!currentMidiBlob) {
+        setTranscriptionMessage('Generate a MIDI file first.', 'error');
+        return;
+    }
+
+    stopMidiPlayback();
+
+    await Tone.start();
+
+    const midi = await loadMidiFromBlob(currentMidiBlob);
+
+    synth = new Tone.PolySynth(Tone.Synth).toDestination();
+
+    midi.tracks.forEach(track => {
+        track.notes.forEach(note => {
+            Tone.Transport.schedule(time => {
+                synth.triggerAttackRelease(
+                    note.name,
+                    note.duration,
+                    time,
+                    note.velocity
+                );
+            }, note.time);
+        });
+    });
+
+    Tone.Transport.start();
+}
+
+
+/**
+ * Pauses MIDI playback.
+ */
+function pauseMidiPlayback() {
+    Tone.Transport.pause();
+}
+
+
+// Event listeners
+convertBtn.addEventListener('click', transcribeAudio);
+playBtn.addEventListener('click', playMidi);
+pauseBtn.addEventListener('click', pauseMidiPlayback);
+stopBtn.addEventListener('click', stopMidiPlayback);
 // Audio Upload Functionality
 const uploadBtn = document.getElementById('uploadBtn');
 const audioFileInput = document.getElementById('audioFileInput');
