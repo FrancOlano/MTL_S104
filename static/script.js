@@ -13,7 +13,13 @@ const recordingMessageDiv = document.getElementById('recordingMessage');
 
 // Configuration
 const API_URL = 'http://localhost:8000';
-let selectedModel = modelSelect.value;
+let selectedModel = modelSelect.dataset.defaultModel || modelSelect.value;
+
+if ([...modelSelect.options].some((option) => option.value === selectedModel)) {
+    modelSelect.value = selectedModel;
+} else {
+    selectedModel = modelSelect.value;
+}
 
 // Audio visualization variables
 let audioContext = null;
@@ -287,8 +293,6 @@ async function transcribeAudio() {
         );
         return;
     }
-
-    const selectedModel = modelSelect.value;
 
     const formData = new FormData();
     formData.append('audio', audioFileForTranscription);

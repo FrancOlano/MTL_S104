@@ -41,7 +41,11 @@
             <h2>Model Selector</h2>
             <div class="model-selector-container">
                 <label for="modelSelect">Transcription Model</label>
-                <select id="modelSelect" name="model">
+                <select
+                    id="modelSelect"
+                    name="model"
+                    data-default-model="{{ default_transcription_model }}"
+                >
                     {% for model in transcription_models %}
                     <option value="{{ model.value }}" {% if model.value == default_transcription_model %}selected{% endif %}>
                         {{ model.label }}
