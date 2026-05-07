@@ -1,7 +1,30 @@
 // DOM Elements
-const playBtn = document.getElementById('playBtn');
-const pauseBtn = document.getElementById('pauseBtn');
-const stopBtn = document.getElementById('stopBtn');
+const midiControls = document.getElementById('midiControls');
+const playBtn = document.createElement('button');
+const pauseBtn = document.createElement('button');
+const stopBtn = document.createElement('button');
+
+playBtn.id = 'playBtn';
+playBtn.type = 'button';
+playBtn.setAttribute('aria-label', 'Play');
+playBtn.title = 'Play';
+playBtn.textContent = '▶';
+
+pauseBtn.id = 'pauseBtn';
+pauseBtn.type = 'button';
+pauseBtn.setAttribute('aria-label', 'Pause');
+pauseBtn.title = 'Pause';
+pauseBtn.textContent = '||';
+
+stopBtn.id = 'stopBtn';
+stopBtn.type = 'button';
+stopBtn.setAttribute('aria-label', 'Stop');
+stopBtn.title = 'Stop';
+stopBtn.textContent = '■';
+
+midiControls.appendChild(playBtn);
+midiControls.appendChild(pauseBtn);
+midiControls.appendChild(stopBtn);
 const responseDiv = document.getElementById('response');
 const messageDiv = document.getElementById('message');
 const recordBtn = document.getElementById('recordBtn');
@@ -235,6 +258,15 @@ let audioFileForTranscription = null;
 let currentMidiBlob = null;
 let currentMidiUrl = null;
 let synth = null;
+let midiIsScheduled = false;
+
+function updatePlaybackControls() {
+    const hasMidi = Boolean(currentMidiBlob);
+
+    playBtn.disabled = !hasMidi;
+    pauseBtn.disabled = !hasMidi || Tone.Transport.state !== 'started';
+    stopBtn.disabled = !hasMidi;
+}
 
 
 
@@ -271,6 +303,8 @@ function clearMidiDownload() {
     }
 
     currentMidiBlob = null;
+    midiIsScheduled = false;
+    updatePlaybackControls();
 }
 
 
@@ -324,6 +358,7 @@ async function transcribeAudio() {
         downloadMidiLink.style.display = 'inline-block';
 
         setTranscriptionMessage('✓ MIDI generated successfully.', 'success');
+        updatePlaybackControls();
 
     } catch (error) {
         console.error('Transcription error:', error);
@@ -353,6 +388,9 @@ function stopMidiPlayback() {
     if (synth) {
         synth.releaseAll();
     }
+
+    midiIsScheduled = false;
+    updatePlaybackControls();
 }
 
 
@@ -365,9 +403,15 @@ async function playMidi() {
         return;
     }
 
-    stopMidiPlayback();
-
     await Tone.start();
+
+    if (Tone.Transport.state === 'paused') {
+        Tone.Transport.start();
+        updatePlaybackControls();
+        return;
+    }
+
+    stopMidiPlayback();
 
     const midi = await loadMidiFromBlob(currentMidiBlob);
 
@@ -386,7 +430,9 @@ async function playMidi() {
         });
     });
 
+    midiIsScheduled = true;
     Tone.Transport.start();
+    updatePlaybackControls();
 }
 
 
@@ -395,7 +441,26 @@ async function playMidi() {
  */
 function pauseMidiPlayback() {
     Tone.Transport.pause();
+    updatePlaybackControls();
 }
+
+function handlePlayClick() {
+    playMidi();
+}
+
+function handlePauseClick() {
+    pauseMidiPlayback();
+}
+
+function handleStopClick() {
+    stopMidiPlayback();
+}
+
+playBtn.addEventListener('click', handlePlayClick);
+pauseBtn.addEventListener('click', handlePauseClick);
+stopBtn.addEventListener('click', handleStopClick);
+
+updatePlaybackControls();
 
 
 // Event listeners
