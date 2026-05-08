@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello World App</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>WidiAI</title>
+    <link rel="stylesheet" href="../static/style.css">
+	<link rel="icon" href="../static/WidiAI_logo.ico">
 </head>
 <body>
     <div class="container">
-        <h1>Audio to MIDI App</h1>
+        <h1>WidiAI</h1>
 
         <!-- Audio Recording Section -->
         <div class="section">
@@ -22,6 +23,7 @@
             <div id="recordingStatus" class="response">
                 <div id="recordingMessage" class="message"></div>
             </div>
+            <audio id="recordingPlayback" class="recording-playback" controls></audio>
         </div>
 
         <!-- Audio Upload Section -->
@@ -44,13 +46,10 @@
                 <select
                     id="modelSelect"
                     name="model"
-                    data-default-model="{{ default_transcription_model }}"
+                    data-default-model="transkun"
                 >
-                    {% for model in transcription_models %}
-                    <option value="{{ model.value }}" {% if model.value == default_transcription_model %}selected{% endif %}>
-                        {{ model.label }}
-                    </option>
-                    {% endfor %}
+                    <option value="transkun" selected>Transkun</option>
+                    <option value="onsets_and_frames">Onsets and Frames</option>
                 </select>
             </div>
         </div>
@@ -77,6 +76,10 @@
 
     <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.min.js"></script>
-    <script src="/static/script.js"></script>
+    <script src="../static/model_selector.js"></script>
+    <script src="../static/audio_selector.js"></script>
+    <script src="../static/record.js"></script>
+    <script src="../static/midi_menu.js"></script>
+    <script src="../static/transcription.js"></script>
 </body>
 </html>
