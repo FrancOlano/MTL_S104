@@ -5,3 +5,6 @@ __pycache__
 checkpoint_50000.pt
 *.pt
 *.pth
+
+venv
+.venv
