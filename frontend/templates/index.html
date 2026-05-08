@@ -46,13 +46,10 @@
                 <select
                     id="modelSelect"
                     name="model"
-                    data-default-model="{{ default_transcription_model }}"
+                    data-default-model="transkun"
                 >
-                    {% for model in transcription_models %}
-                    <option value="{{ model.value }}" {% if model.value == default_transcription_model %}selected{% endif %}>
-                        {{ model.label }}
-                    </option>
-                    {% endfor %}
+                    <option value="transkun" selected>Transkun</option>
+                    <option value="onsets_and_frames">Onsets and Frames</option>
                 </select>
             </div>
         </div>
