@@ -3,22 +3,29 @@
     const canvas = document.getElementById('waveformCanvas');
     const recordingStatusDiv = document.getElementById('recordingStatus');
     const recordingMessageDiv = document.getElementById('recordingMessage');
+    const recordingPlayback = document.getElementById('recordingPlayback');
 
-    if (!recordBtn || !canvas || !recordingStatusDiv || !recordingMessageDiv) return;
+    if (!recordBtn || !canvas || !recordingStatusDiv || !recordingMessageDiv || !recordingPlayback) return;
 
     const state = (window.appState = window.appState || {});
-    const API_URL = state.apiUrl || 'http://localhost:8000';
 
     const canvasCtx = canvas.getContext('2d');
 
     let audioContext = null;
     let analyser = null;
     let mediaStream = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
     let isRecording = false;
     let animationId = null;
     let waveformHistory = [];
     const MAX_HISTORY = 60;
+    const MAX_DURATION_MS = 5 * 60 * 1000;
+    const MAX_STORAGE_BYTES = 4_500_000;
+    let recordingTimerId = null;
+    let recordingStartedAt = 0;
 
+    // Initialize audio graph for visualization
     async function initializeAudioContext() {
         if (audioContext) return;
 
@@ -40,6 +47,69 @@
         }
     }
 
+    // Select the best available recording MIME type
+    function getSupportedMimeType() {
+        const candidates = [
+            'audio/webm;codecs=opus',
+            'audio/ogg;codecs=opus',
+            'audio/webm',
+            'audio/ogg',
+        ];
+
+        for (const type of candidates) {
+            if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) {
+                return type;
+            }
+        }
+
+        return '';
+    }
+
+    // Persist the recording as a data URL in sessionStorage
+    function saveRecordingToSession(blob, durationMs, mimeType) {
+        if (blob.size > MAX_STORAGE_BYTES) {
+            recordingStatusDiv.classList.add('error');
+            recordingMessageDiv.textContent = '✗ Recording is too large for session storage. Try a shorter recording.';
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const dataUrl = reader.result;
+            const meta = {
+                mimeType,
+                durationMs,
+                createdAt: new Date().toISOString(),
+            };
+
+            try {
+                sessionStorage.setItem('recordingDataUrl', dataUrl);
+                sessionStorage.setItem('recordingMeta', JSON.stringify(meta));
+                state.recordingDataUrl = dataUrl;
+                state.recordingMeta = meta;
+                updatePlaybackSource(dataUrl);
+            } catch (error) {
+                recordingStatusDiv.classList.add('error');
+                recordingMessageDiv.textContent = '✗ Recording could not be stored. Storage limit reached.';
+            }
+        };
+
+        reader.readAsDataURL(blob);
+    }
+
+    // Load the latest stored recording into the player
+    function updatePlaybackSource(dataUrl) {
+        recordingPlayback.src = dataUrl;
+        recordingPlayback.classList.add('is-visible');
+        recordingPlayback.load();
+    }
+
+    const storedRecording = sessionStorage.getItem('recordingDataUrl');
+    if (storedRecording) {
+        updatePlaybackSource(storedRecording);
+    }
+
+    // Draw the live waveform visualization on the canvas
     function drawWaveform() {
         if (!analyser) return;
 
@@ -87,6 +157,7 @@
         }
     }
 
+    // Start or stop local recording and store result in sessionStorage
     async function toggleRecording() {
         if (!isRecording) {
             try {
@@ -97,26 +168,38 @@
 
                 await initializeAudioContext();
 
-                const response = await fetch(`${API_URL}/start-recording`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                const mimeType = getSupportedMimeType();
+                mediaStream = mediaStream || (await navigator.mediaDevices.getUserMedia({ audio: true }));
+                mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
+                recordedChunks = [];
+
+                mediaRecorder.addEventListener('dataavailable', (event) => {
+                    if (event.data && event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
                 });
 
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to start recording');
-                }
+                mediaRecorder.addEventListener('stop', () => {
+                    const blob = new Blob(recordedChunks, { type: mimeType || 'audio/webm' });
+                    const durationMs = Math.max(0, Date.now() - recordingStartedAt);
+                    saveRecordingToSession(blob, durationMs, blob.type || 'audio/webm');
+                });
 
                 isRecording = true;
+                recordingStartedAt = Date.now();
                 recordBtn.style.display = 'none';
                 canvas.classList.add('show');
                 recordBtn.disabled = false;
                 recordingStatusDiv.classList.add('success');
                 recordingMessageDiv.textContent = '🔴 Recording... (click to stop)';
                 waveformHistory = [];
+
+                mediaRecorder.start();
+                recordingTimerId = window.setTimeout(() => {
+                    if (isRecording) {
+                        toggleRecording();
+                    }
+                }, MAX_DURATION_MS);
 
                 drawWaveform();
             } catch (error) {
@@ -136,29 +219,22 @@
                     animationId = null;
                 }
 
-                const response = await fetch(`${API_URL}/stop-recording`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.message || 'Failed to stop recording');
-                }
-
                 isRecording = false;
                 canvas.classList.remove('show');
                 recordBtn.style.display = 'flex';
                 recordingStatusDiv.classList.remove('error');
                 recordingStatusDiv.classList.add('success');
-                recordingMessageDiv.textContent = `✓ Recording saved: ${data.filename}`;
+                recordingMessageDiv.textContent = '✓ Recording saved in this session.';
                 recordBtn.disabled = false;
 
-                state.lastRecordingFilename = data.filename;
-                sessionStorage.setItem('lastRecordingFilename', data.filename);
+                if (recordingTimerId) {
+                    clearTimeout(recordingTimerId);
+                    recordingTimerId = null;
+                }
+
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
 
                 if (mediaStream) {
                     mediaStream.getTracks().forEach(track => track.stop());
