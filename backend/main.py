@@ -20,14 +20,14 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
-from custom_transcriber import transcribe_with_own_model
+from backend.custom_transcriber import transcribe_with_own_model
 
 
 app = FastAPI()
 
-# Setup static files and templates
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+# Setup static files and templates (moved to frontend/)
+app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
+templates = Jinja2Templates(directory="frontend/templates")
 
 # Enable CORS for frontend requests
 app.add_middleware(
@@ -234,6 +234,7 @@ def run_transkun(audio_path: Path, output_path: Path):
         raise RuntimeError("TransKun finished but no MIDI file was created.")
 
 
+
 @app.post("/transcribe")
 async def transcribe_audio(
     background_tasks: BackgroundTasks,
@@ -303,6 +304,7 @@ async def transcribe_audio(
             status_code=500,
             detail=str(e),
         )
+
 
 
 @app.post("/upload-audio")
