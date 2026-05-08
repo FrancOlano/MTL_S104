@@ -16,7 +16,9 @@ from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
-from backend.custom_transcriber import transcribe_with_own_model
+from backend.custom_transcriber import (
+    transcribe_with_own_model as transcribe_with_onsets_and_frames,
+)
 
 
 app = FastAPI()
@@ -51,7 +53,7 @@ if not os.path.exists(RECORDINGS_DIR):
 async def index(request: Request):
     # Transcription models available for the frontend selector.
     transcription_models = [
-        {"value": "own", "label": "Own Model"},
+        {"value": "onsets_and_frames", "label": "Onsets and Frames"},
         {"value": "transkun", "label": "TransKun"},
     ]
     return templates.TemplateResponse("index.html", {
@@ -138,15 +140,15 @@ async def transcribe_audio(
 
     Required form-data:
         audio: audio file
-        model: own OR transkun
+        model: onsets_and_frames OR transkun
     """
 
     selected_model = model_name.strip().lower()
 
-    if selected_model not in {"own", "transkun"}:
+    if selected_model not in {"onsets_and_frames", "transkun"}:
         raise HTTPException(
             status_code=400,
-            detail="Invalid model. Use 'own' or 'transkun'.",
+            detail="Invalid model. Use 'onsets_and_frames' or 'transkun'.",
         )
 
     original_suffix = Path(audio.filename or "input.wav").suffix.lower()
@@ -165,9 +167,9 @@ async def transcribe_audio(
     try:
         await save_upload_file(audio, input_path)
 
-        if selected_model == "own":
+        if selected_model == "onsets_and_frames":
             await run_in_threadpool(
-                transcribe_with_own_model,
+                transcribe_with_onsets_and_frames,
                 input_path,
                 output_path,
             )
