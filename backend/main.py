@@ -12,18 +12,15 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
-from starlette.requests import Request
 
 from backend.custom_transcriber import transcribe_with_own_model
 
 
 app = FastAPI()
 
-# Setup static files and templates (moved to frontend/)
+# Setup static files
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
-templates = Jinja2Templates(directory="frontend/templates")
 
 # Enable CORS for frontend requests
 app.add_middleware(
@@ -48,17 +45,8 @@ if not os.path.exists(RECORDINGS_DIR):
     os.makedirs(RECORDINGS_DIR)
 
 @app.get("/")
-async def index(request: Request):
-    # Transcription models available for the frontend selector.
-    transcription_models = [
-        {"value": "own", "label": "Own Model"},
-        {"value": "transkun", "label": "TransKun"},
-    ]
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "transcription_models": transcription_models,
-        "default_transcription_model": "transkun"
-    })
+async def index():
+    return FileResponse("frontend/templates/index.html")
 
 def cleanup_files(paths: list[str]):
     """Delete temporary files after sending response."""
