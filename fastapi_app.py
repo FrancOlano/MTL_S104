@@ -89,15 +89,15 @@ def record_audio():
 
 @app.get("/")
 async def index(request: Request):
-    # Mock transcription models for the dropdown
+    # Transcription models available for the frontend selector.
     transcription_models = [
-        {"value": "openai", "label": "OpenAI Whisper"},
-        {"value": "local", "label": "Local Model"},
+        {"value": "own", "label": "Own Model"},
+        {"value": "transkun", "label": "TransKun"},
     ]
     return templates.TemplateResponse("index.html", {
         "request": request,
         "transcription_models": transcription_models,
-        "default_transcription_model": "openai"
+        "default_transcription_model": "transkun"
     })
 
 @app.post("/start-recording")
