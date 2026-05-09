@@ -123,6 +123,7 @@ const state = {
   midiNotes: [],
   midiDuration: 0,
   midiTempo: null,
+  noteEditMode: false,
   statusMessage: '',
   statusType: 'info',
   modelDropdownOpen: false,
@@ -176,6 +177,7 @@ function resetMidiData() {
   state.midiDuration = 0;
   state.midiTempo = null;
   state.midiTime = 0;
+  state.noteEditMode = false;
 }
 
 function getNativeAudioContext() {
@@ -447,11 +449,17 @@ function injectCSS(container) {
 
 /* Piano Roll - Premium Container */
 .w-piano-wrap{border-radius:20px 20px 0 0;overflow:hidden;flex-shrink:0;height:330px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.08);border-bottom:none;box-shadow:0 -4px 24px rgba(0,0,0,0.3),0 1px 0 rgba(255,255,255,0.04) inset;}
+.w-piano-wrap.edit-mode{height:460px;}
 .w-piano-header{display:flex;align-items:center;justify-content:space-between;padding:10px 18px;border-bottom:1px solid rgba(255,255,255,0.06);background:linear-gradient(180deg,rgba(0,0,0,0.4),rgba(0,0,0,0.3));backdrop-filter:blur(12px);}
 .w-piano-body{height:calc(100% - 41px);}
 .w-live-badge{display:flex;align-items:center;gap:7px;border-radius:24px;padding:5px 12px;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.3);box-shadow:0 0 12px rgba(16,185,129,0.15);}
 @keyframes blink{0%,100%{opacity:1;}50%{opacity:0.25;}}
 .w-live-dot{width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 8px rgba(16,185,129,0.8);animation:blink 1.2s infinite;}
+.w-piano-meta{display:flex;align-items:center;gap:10px;}
+.w-note-edit-btn{border-radius:8px;padding:6px 10px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.03);color:#9ca3af;font-size:10px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;transition:all 0.2s;}
+.w-note-edit-btn:hover:not(:disabled){background:rgba(139,92,246,0.14);border-color:rgba(139,92,246,0.34);color:#c4b5fd;}
+.w-note-edit-btn.active{background:rgba(139,92,246,0.2);border-color:rgba(139,92,246,0.44);color:#ddd6fe;box-shadow:0 0 12px rgba(139,92,246,0.22);}
+.w-note-edit-btn:disabled{opacity:0.45;cursor:not-allowed;}
 
 /* History Page */
 .w-history{display:flex;flex-direction:column;flex:1;overflow:hidden;padding:20px 24px;gap:14px;}
@@ -564,12 +572,19 @@ const BLACK_S = new Set([1, 3, 6, 8, 10]);
 const KEY_H = 130, BK_RATIO = 0.62;
 
 class PianoRoll {
-  constructor(container, notes) {
+  constructor(container, notes, options = {}) {
     this.container = container;
     this.notes = notes;
+    this.editMode = Boolean(options.editMode);
+    this.onNotesChange = typeof options.onNotesChange === 'function' ? options.onNotesChange : null;
+    this.onEditCommit = typeof options.onEditCommit === 'function' ? options.onEditCommit : null;
     this.currentTime = 0;
     this.isPlaying = false;
     this.pressedKeys = new Set();
+    this.noteHitboxes = [];
+    this.hoverNoteIndex = -1;
+    this.hoverNoteMode = null;
+    this.draggingNote = null;
     this.animId = 0;
     this.lastTs = null;
     this.internalTime = 0;
@@ -590,6 +605,118 @@ class PianoRoll {
     playPreviewNote(midi).catch(error => {
       console.error('Preview note error:', error);
     });
+  }
+
+  _setCursor(y, noteMode = null) {
+    if (this.draggingNote) {
+      this.canvas.style.cursor = this.draggingNote.mode === 'duration' ? 'ns-resize' : 'ew-resize';
+      return;
+    }
+    if (this.editMode && !this.isPlaying && y < this.H - KEY_H && noteMode) {
+      this.canvas.style.cursor = noteMode === 'duration' ? 'ns-resize' : 'ew-resize';
+      return;
+    }
+    this.canvas.style.cursor = y >= this.H - KEY_H ? 'pointer' : 'default';
+  }
+
+  _getRollPixelsPerSecond() {
+    const rollHeight = Math.max(60, this.H - KEY_H);
+    return rollHeight / 3.5;
+  }
+
+  _resolveNoteDragMode(box, y) {
+    if (!box) return null;
+    const topHandle = Math.min(10, Math.max(4, box.h * 0.35));
+    if (y <= box.y + topHandle) return 'duration';
+    return 'pitch';
+  }
+
+  _hitNote(x, y) {
+    for (let i = this.noteHitboxes.length - 1; i >= 0; i -= 1) {
+      const box = this.noteHitboxes[i];
+      if (x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h) {
+        return { ...box, mode: this._resolveNoteDragMode(box, y) };
+      }
+    }
+    return null;
+  }
+
+  _startNoteDrag(hit, clientY) {
+    if (!hit || !hit.noteRef) return false;
+    this.draggingNote = {
+      index: hit.index,
+      noteRef: hit.noteRef,
+      mode: hit.mode || 'pitch',
+      startDuration: Math.max(0.03, Number(hit.noteRef.duration) || 0.12),
+      startClientY: clientY,
+      changed: false,
+    };
+    this.hoverNoteIndex = hit.index;
+    this.hoverNoteMode = this.draggingNote.mode;
+    this.canvas.style.cursor = this.draggingNote.mode === 'duration' ? 'ns-resize' : 'ew-resize';
+    return true;
+  }
+
+  _keyAtX(x) {
+    const clamped = Math.max(0, Math.min(this.W - 1, x));
+    for (const key of this.keys) {
+      if (key.isBlack && clamped >= key.x && clamped <= key.x + key.w) {
+        return key;
+      }
+    }
+    for (const key of this.keys) {
+      if (!key.isBlack && clamped >= key.x && clamped <= key.x + key.w) {
+        return key;
+      }
+    }
+    let closest = null;
+    let closestDist = Number.POSITIVE_INFINITY;
+    for (const key of this.keys) {
+      const cx = key.x + key.w / 2;
+      const d = Math.abs(cx - clamped);
+      if (d < closestDist) {
+        closestDist = d;
+        closest = key;
+      }
+    }
+    return closest;
+  }
+
+  _updateNoteDrag(clientX, clientY) {
+    if (!this.draggingNote || !this.draggingNote.noteRef) return;
+
+    if (this.draggingNote.mode === 'duration') {
+      const pps = this._getRollPixelsPerSecond();
+      const deltaSec = (this.draggingNote.startClientY - clientY) / pps;
+      const nextDuration = Math.max(0.03, this.draggingNote.startDuration + deltaSec);
+
+      if (Math.abs(nextDuration - this.draggingNote.noteRef.duration) > 0.0001) {
+        this.draggingNote.noteRef.duration = nextDuration;
+        this.draggingNote.changed = true;
+        if (this.onNotesChange) this.onNotesChange(this.notes);
+      }
+      return;
+    }
+
+    const rect = this.canvas.getBoundingClientRect();
+    const localX = clientX - rect.left;
+    const key = this._keyAtX(localX);
+    if (!key) return;
+    const nextMidi = key.midi;
+
+    if (nextMidi !== this.draggingNote.noteRef.note) {
+      this.draggingNote.noteRef.note = nextMidi;
+      this.draggingNote.changed = true;
+      if (this.onNotesChange) this.onNotesChange(this.notes);
+    }
+  }
+
+  _finishNoteDrag(shouldCommit = true) {
+    if (!this.draggingNote) return;
+    const changed = Boolean(this.draggingNote.changed);
+    this.draggingNote = null;
+    this.hoverNoteMode = null;
+    if (shouldCommit && changed && this.onEditCommit) this.onEditCommit(this.notes);
   }
 
   _buildKeys(W) {
@@ -618,16 +745,51 @@ class PianoRoll {
     const releaseAll = () => { this.pressedKeys.clear(); };
 
     this._h = {
-      md: e => { const { x, y } = xy(e); const k = this._hitTest(x, y); if (k) press(k.midi); },
+      md: e => {
+        const { x, y } = xy(e);
+        if (this.editMode && !this.isPlaying && y < this.H - KEY_H) {
+          const hit = this._hitNote(x, y);
+          if (hit) {
+            this._startNoteDrag(hit, e.clientY);
+            return;
+          }
+        }
+        const k = this._hitTest(x, y);
+        if (k) press(k.midi);
+      },
       mm: e => {
         const { x, y } = xy(e);
-        c.style.cursor = y >= this.H - KEY_H ? 'pointer' : 'default';
+        if (this.draggingNote) {
+          this._updateNoteDrag(e.clientX, e.clientY);
+          this._setCursor(y, this.draggingNote.mode);
+          return;
+        }
+
+        const noteHit = this.editMode && !this.isPlaying && y < this.H - KEY_H
+          ? this._hitNote(x, y)
+          : null;
+        this.hoverNoteIndex = noteHit ? noteHit.index : -1;
+        this.hoverNoteMode = noteHit ? noteHit.mode : null;
+        this._setCursor(y, noteHit ? noteHit.mode : null);
+
         if (e.buttons !== 1) return;
         const k = this._hitTest(x, y);
         if (k && !this.pressedKeys.has(k.midi)) { releaseAll(); press(k.midi); }
       },
-      mu: () => releaseAll(),
-      ml: () => releaseAll(),
+      mu: () => { this._finishNoteDrag(); releaseAll(); },
+      ml: () => {
+        if (this.draggingNote) return;
+        releaseAll();
+        this.hoverNoteIndex = -1;
+        this.hoverNoteMode = null;
+        this.canvas.style.cursor = 'default';
+      },
+      wm: e => {
+        if (!this.draggingNote) return;
+        this._updateNoteDrag(e.clientX, e.clientY);
+      },
+      wu: () => { this._finishNoteDrag(); releaseAll(); },
+      wb: () => { this._finishNoteDrag(); releaseAll(); this.canvas.style.cursor = 'default'; },
       ts: e => { e.preventDefault(); releaseAll(); Array.from(e.touches).forEach(t => { const r = c.getBoundingClientRect(); const k = this._hitTest(t.clientX - r.left, t.clientY - r.top); if (k) press(k.midi); }); },
       tm: e => { e.preventDefault(); releaseAll(); Array.from(e.touches).forEach(t => { const r = c.getBoundingClientRect(); const k = this._hitTest(t.clientX - r.left, t.clientY - r.top); if (k) press(k.midi); }); },
       te: e => { e.preventDefault(); const still = new Set(); Array.from(e.touches).forEach(t => { const r = c.getBoundingClientRect(); const k = this._hitTest(t.clientX - r.left, t.clientY - r.top); if (k) still.add(k.midi); }); this.pressedKeys.forEach(m => { if (!still.has(m)) release(m); }); },
@@ -639,6 +801,9 @@ class PianoRoll {
     c.addEventListener('touchstart', this._h.ts, { passive: false });
     c.addEventListener('touchmove', this._h.tm, { passive: false });
     c.addEventListener('touchend', this._h.te, { passive: false });
+    window.addEventListener('mousemove', this._h.wm);
+    window.addEventListener('mouseup', this._h.wu);
+    window.addEventListener('blur', this._h.wb);
   }
 
   _setup() {
@@ -656,7 +821,11 @@ class PianoRoll {
     const loop = ts => {
       if (this.lastTs !== null) {
         const d = (ts - this.lastTs) / 1000;
-        this.internalTime = this.isPlaying ? this.currentTime : (this.internalTime + d * 0.22) % (48);
+        if (this.isPlaying || (this.notes && this.notes.length)) {
+          this.internalTime = this.currentTime;
+        } else {
+          this.internalTime = (this.internalTime + d * 0.22) % 48;
+        }
       }
       this.lastTs = ts;
       this._draw(ctx, W, H, this.internalTime);
@@ -694,15 +863,36 @@ class PianoRoll {
     ctx.strokeStyle='rgba(255,255,255,0.04)'; ctx.lineWidth=0.5;
     this.keys.filter(k=>!k.isBlack).forEach(k=>{ctx.beginPath();ctx.moveTo(k.x,0);ctx.lineTo(k.x,ROLL_H);ctx.stroke();});
 
-    this.notes.forEach(n => {
+    this.noteHitboxes = [];
+    this.notes.forEach((n, index) => {
       const k=km.get(n.note); if(!k) return;
       const nb=ROLL_H-(n.startTime-time)*PPS, nt=nb-n.duration*PPS;
       if(nb<0||nt>ROLL_H) return;
       const color=this._noteColor(n.note), x=k.x+1, w=k.w-2, y=Math.max(0,nt), h=Math.min(nb,ROLL_H)-y;
       if(h<=0) return;
+
+      this.noteHitboxes.push({ index, x, y, w, h, noteRef: n });
+      const selected = this.draggingNote && this.draggingNote.index === index;
+      const hovered = !selected && this.hoverNoteIndex === index;
+      const hoverMode = hovered ? this.hoverNoteMode : null;
+      const selectedMode = selected && this.draggingNote ? this.draggingNote.mode : null;
+
       ctx.shadowColor=color; ctx.shadowBlur=10; ctx.fillStyle=color; ctx.globalAlpha=0.7+(n.velocity/127)*0.3;
       this._rr(ctx,x,y,w,h,2); ctx.fill(); ctx.globalAlpha=1; ctx.shadowBlur=0;
       ctx.fillStyle='rgba(255,255,255,0.55)'; ctx.fillRect(x,y,w,2);
+
+      if (selected || hovered) {
+        ctx.strokeStyle = selected ? 'rgba(196,181,253,0.95)' : 'rgba(196,181,253,0.7)';
+        ctx.lineWidth = selected ? 1.6 : 1.2;
+        this._rr(ctx, x, y, w, h, 2);
+        ctx.stroke();
+      }
+
+      if (this.editMode && (selected || hovered)) {
+        const durationMode = (selectedMode === 'duration') || (hoverMode === 'duration');
+        ctx.fillStyle = durationMode ? 'rgba(196,181,253,0.95)' : 'rgba(196,181,253,0.55)';
+        ctx.fillRect(x + 1, y + 1, Math.max(2, w - 2), 2);
+      }
     });
     ctx.shadowBlur=0; ctx.globalAlpha=1;
 
@@ -827,6 +1017,12 @@ class PianoRoll {
 
   setTime(t) { this.currentTime = t; }
   setPlaying(p) { this.isPlaying = p; }
+  setEditMode(enabled) {
+    this.editMode = Boolean(enabled);
+    this.hoverNoteIndex = -1;
+    this.hoverNoteMode = null;
+    if (!this.editMode) this._finishNoteDrag();
+  }
 
   destroy() {
     cancelAnimationFrame(this.animId);
@@ -839,6 +1035,10 @@ class PianoRoll {
     c.removeEventListener('touchstart', this._h.ts);
     c.removeEventListener('touchmove', this._h.tm);
     c.removeEventListener('touchend', this._h.te);
+    window.removeEventListener('mousemove', this._h.wm);
+    window.removeEventListener('mouseup', this._h.wu);
+    window.removeEventListener('blur', this._h.wb);
+    this._finishNoteDrag(false);
     this.pressedKeys.clear();
     c.remove();
   }
@@ -1107,15 +1307,26 @@ function renderDashboard(content) {
       </div>
 
       <!-- Piano Roll -->
-      <div class="w-piano-wrap">
+      <div class="w-piano-wrap${state.noteEditMode ? ' edit-mode' : ''}">
         <div class="w-piano-header">
           <div style="display:flex;align-items:center;gap:8px;">
             <div style="width:3px;height:14px;border-radius:2px;background:linear-gradient(180deg,#3b82f6,#8b5cf6);"></div>
             <span style="font-size:11px;color:#9ca3af;font-weight:600;letter-spacing:0.06em;">PIANO ROLL</span>
             <span style="font-size:9px;color:#6b7280;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:4px;padding:2px 6px;">88 KEYS · SYNTHESIA VIEW</span>
           </div>
-          <div id="piano-status">
-            ${state.midiPlaying ? `<div class="w-live-badge"><div class="w-live-dot"></div><span style="font-size:10px;color:#6ee7b7;">LIVE</span></div>` : `<span style="font-size:10px;color:#4b5563;">${state.stage==='ready'?'Ready · Press play':'Demo preview'}</span>`}
+          <div class="w-piano-meta">
+            <button
+              id="note-edit-toggle"
+              class="w-note-edit-btn ${state.noteEditMode ? 'active' : ''}"
+              ${state.stage!=='ready' ? 'disabled' : ''}
+            >
+              ${state.noteEditMode ? 'Editing On' : 'Edit Notes'}
+            </button>
+            <div id="piano-status">
+              ${state.midiPlaying
+                ? `<div class="w-live-badge"><div class="w-live-dot"></div><span style="font-size:10px;color:#6ee7b7;">LIVE</span></div>`
+                : `<span style="font-size:10px;color:#4b5563;">${state.noteEditMode && state.stage==='ready' ? 'Edit mode · L/R pitch · top edge U/D duration' : (state.stage==='ready' ? 'Ready · Press play' : 'Demo preview')}</span>`}
+            </div>
           </div>
         </div>
         <div class="w-piano-body" id="piano-body"></div>
@@ -1128,7 +1339,28 @@ function renderDashboard(content) {
   if (_waveform && state.stage !== 'idle') _waveform.update(WAVEFORM, state.midiTime, playbackDuration, state.isRecording);
 
   const pianoBody = content.querySelector('#piano-body');
-  if (pianoBody) { _pianoRoll = new PianoRoll(pianoBody, rollNotes); _pianoRoll.setTime(state.midiTime); _pianoRoll.setPlaying(state.midiPlaying); }
+  if (pianoBody) {
+    _pianoRoll = new PianoRoll(pianoBody, rollNotes, {
+      editMode: state.noteEditMode && state.stage === 'ready',
+      onNotesChange: notes => {
+        if (state.stage === 'ready') state.midiNotes = notes;
+      },
+      onEditCommit: notes => {
+        if (state.stage === 'ready') state.midiNotes = notes;
+        const rebuilt = _rebuildMidiBlobFromEditedNotes();
+        setStatusMessage(
+          rebuilt
+            ? 'Note updated. Playback and MIDI export were refreshed.'
+            : 'Note updated for playback, but MIDI export refresh failed.',
+          rebuilt ? 'success' : 'error'
+        );
+        renderDashboard(content);
+      },
+    });
+    _pianoRoll.setTime(state.midiTime);
+    _pianoRoll.setPlaying(state.midiPlaying);
+    _pianoRoll.setEditMode(state.noteEditMode && state.stage === 'ready' && !state.midiPlaying);
+  }
 
   if (state.audioUrl && state.fileName) {
     const apWrap = content.querySelector('#ap-wrap');
@@ -1157,6 +1389,17 @@ function renderDashboard(content) {
   content.querySelector('#midi-dl').addEventListener('click', _downloadMidi);
   content.querySelector('#demo-midi-btn').addEventListener('click', () => _loadDemoMidi(content));
   content.querySelector('#export-btn').addEventListener('click', _downloadMidi);
+  content.querySelector('#note-edit-toggle')?.addEventListener('click', () => {
+    if (state.stage !== 'ready') return;
+    state.noteEditMode = !state.noteEditMode;
+    setStatusMessage(
+      state.noteEditMode
+        ? 'Edit mode enabled. Left/right changes pitch. Drag the top edge up/down to change duration.'
+        : 'Edit mode disabled.',
+      'success'
+    );
+    renderDashboard(content);
+  });
   content.querySelector('#midi-seek').addEventListener('input', e => {
     state.midiTime = parseFloat(e.target.value);
     if (_pianoRoll) _pianoRoll.setTime(state.midiTime);
@@ -1179,8 +1422,20 @@ function _updateSeek(content) {
   }
   if (cur) cur.textContent = fmtTime(state.midiTime);
   const ps = content.querySelector('#piano-status');
-  if (ps) { if (state.midiPlaying) ps.innerHTML = `<div class="w-live-badge"><div class="w-live-dot"></div><span style="font-size:10px;color:#6ee7b7;">LIVE</span></div>`; else ps.innerHTML = `<span style="font-size:10px;color:#4b5563;">${state.stage==='ready'?'Ready · Press play':'Demo preview'}</span>`; }
-  if (_pianoRoll) { _pianoRoll.setTime(state.midiTime); _pianoRoll.setPlaying(state.midiPlaying); }
+  if (ps) {
+    if (state.midiPlaying) {
+      ps.innerHTML = `<div class="w-live-badge"><div class="w-live-dot"></div><span style="font-size:10px;color:#6ee7b7;">LIVE</span></div>`;
+    } else if (state.noteEditMode && state.stage === 'ready') {
+      ps.innerHTML = `<span style="font-size:10px;color:#a78bfa;">Edit mode · L/R pitch · top edge U/D duration</span>`;
+    } else {
+      ps.innerHTML = `<span style="font-size:10px;color:#4b5563;">${state.stage==='ready'?'Ready · Press play':'Demo preview'}</span>`;
+    }
+  }
+  if (_pianoRoll) {
+    _pianoRoll.setTime(state.midiTime);
+    _pianoRoll.setPlaying(state.midiPlaying);
+    _pianoRoll.setEditMode(state.noteEditMode && state.stage === 'ready' && !state.midiPlaying);
+  }
   if (_waveform) _waveform.update(state.stage !== 'idle' ? WAVEFORM : [], state.midiTime, duration, state.isRecording);
 }
 
@@ -1304,6 +1559,46 @@ async function _applyMidiBlob(midiBlob, successMessage) {
   state.progress = 0;
   state.midiTime = 0;
   setStatusMessage(successMessage, 'success');
+}
+
+function _rebuildMidiBlobFromEditedNotes() {
+  if (!window.Midi || !state.midiNotes.length) return false;
+
+  try {
+    const midi = new window.Midi();
+    if (state.midiTempo && midi.header && typeof midi.header.setTempo === 'function') {
+      midi.header.setTempo(Math.max(30, Math.min(300, Number(state.midiTempo) || 120)));
+    }
+
+    const track = midi.addTrack();
+    const orderedNotes = [...state.midiNotes].sort((a, b) => a.startTime - b.startTime);
+    orderedNotes.forEach(note => {
+      const midiNote = Math.round(Number(note.note));
+      const startTime = Math.max(0, Number(note.startTime) || 0);
+      const duration = Math.max(0.03, Number(note.duration) || 0.12);
+      const velocity = Math.min(1, Math.max(0.05, (Number(note.velocity) || 96) / 127));
+
+      if (!Number.isFinite(midiNote) || midiNote < MIDI_LO || midiNote > MIDI_HI) return;
+      track.addNote({
+        midi: midiNote,
+        time: startTime,
+        duration,
+        velocity,
+      });
+    });
+
+    const blob = new Blob([midi.toArray()], { type: 'audio/midi' });
+    if (state.midiUrl) URL.revokeObjectURL(state.midiUrl);
+    state.midiBlob = blob;
+    state.midiUrl = URL.createObjectURL(blob);
+    state.midiDuration = state.midiNotes.length
+      ? Math.max(...state.midiNotes.map(note => (Number(note.startTime) || 0) + Math.max(0.03, Number(note.duration) || 0)))
+      : 0;
+    return true;
+  } catch (error) {
+    console.error('MIDI rebuild error:', error);
+    return false;
+  }
 }
 
 function _buildDemoMidiBlob() {
