@@ -7,6 +7,7 @@
     const playBtn = document.createElement('button');
     const pauseBtn = document.createElement('button');
     const stopBtn = document.createElement('button');
+    const demoBtn = document.createElement('button');
 
     playBtn.id = 'playBtn';
     playBtn.type = 'button';
@@ -26,9 +27,16 @@
     stopBtn.title = 'Stop';
     stopBtn.textContent = '■';
 
+    demoBtn.id = 'demoMidiBtn';
+    demoBtn.type = 'button';
+    demoBtn.setAttribute('aria-label', 'Load demo MIDI');
+    demoBtn.title = 'Load demo MIDI';
+    demoBtn.textContent = 'Demo MIDI';
+
     midiControls.appendChild(playBtn);
     midiControls.appendChild(pauseBtn);
     midiControls.appendChild(stopBtn);
+    midiControls.appendChild(demoBtn);
 
     let currentMidiBlob = null;
     let currentMidiUrl = null;
@@ -150,6 +158,35 @@
         updatePlaybackControls();
     }
 
+    async function loadDemoMidi() {
+        try {
+            const demoMidi = new Midi();
+            const track = demoMidi.addTrack();
+            const notes = [60, 62, 64, 65, 67, 69, 71, 72, 76, 79, 84];
+
+            notes.forEach((midiNote, index) => {
+                track.addNote({
+                    midi: midiNote,
+                    time: index * 0.33,
+                    duration: 0.26 + (index % 3) * 0.08,
+                    velocity: 0.85,
+                });
+            });
+
+            const blob = new Blob([demoMidi.toArray()], { type: 'audio/midi' });
+            await setMidiBlob(blob, 'demo');
+
+            if (typeof window.setTranscriptionMessage === 'function') {
+                window.setTranscriptionMessage('Demo MIDI loaded. Press Play to test falling notes.', 'success');
+            }
+        } catch (error) {
+            console.error('Demo MIDI error:', error);
+            if (typeof window.setTranscriptionMessage === 'function') {
+                window.setTranscriptionMessage(`Could not load demo MIDI: ${error.message}`, 'error');
+            }
+        }
+    }
+
     function stopMidiPlayback() {
         Tone.Transport.stop();
         Tone.Transport.cancel();
@@ -225,6 +262,7 @@
     playBtn.addEventListener('click', playMidi);
     pauseBtn.addEventListener('click', pauseMidiPlayback);
     stopBtn.addEventListener('click', stopMidiPlayback);
+    demoBtn.addEventListener('click', loadDemoMidi);
 
     updatePlaybackControls();
 
