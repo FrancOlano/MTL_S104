@@ -205,7 +205,7 @@ python -m compileall backend frontend
 
 - Strict file size/duration validation from SRS is not fully implemented yet.
 - Browser-recorded audio is stored locally in session storage but not fully wired into the same backend transcription path as file upload.
-- Piano-roll/falling-notes visualization is not implemented.
+- Falling-notes visualization is implemented as a lightweight browser-side preview and may still need UX/performance tuning for very dense MIDI files.
 - Automated test coverage and CI are pending.
 
 ## Roadmap
