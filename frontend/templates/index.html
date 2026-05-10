@@ -4,82 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WidiAI</title>
-    <link rel="stylesheet" href="../static/style.css">
-	<link rel="icon" href="../static/WidiAI_logo.ico">
+    <link rel="icon" href="../static/WidiAI_logo.ico">
 </head>
-<body>
-    <div class="container">
-        <h1>WidiAI</h1>
+<body style="margin:0;min-height:100vh;background:#07070f;">
+    <div id="app" style="width:100%;min-height:100vh;"></div>
 
-        <!-- Audio Recording Section -->
-        <div class="section">
-            <h2>Audio Recorder</h2>
-            <div class="recording-container">
-                <button id="recordBtn" class="record-button">
-                    <div class="record-button-dot"></div>
-                </button>
-                <canvas id="waveformCanvas" width="120" height="120"></canvas>
-            </div>
-            <div id="recordingStatus" class="response">
-                <div id="recordingMessage" class="message"></div>
-            </div>
-            <audio id="recordingPlayback" class="recording-playback" controls></audio>
-        </div>
-
-        <!-- Audio Upload Section -->
-        <div class="section">
-            <h2>Upload Audio File</h2>
-            <div class="upload-container">
-                <input type="file" id="audioFileInput" accept=".wav,.mp3,.flac,.ogg,.m4a" style="display: none;">
-                <button id="uploadBtn" class="upload-button">📁 Upload Audio File</button>
-            </div>
-            <div id="uploadStatus" class="response">
-                <div id="uploadMessage" class="message"></div>
-            </div>
-        </div>
-
-        <!-- Model Selector Section -->
-        <div class="section">
-            <h2>Model Selector</h2>
-            <div class="model-selector-container">
-                <label for="modelSelect">Transcription Model</label>
-                <select
-                    id="modelSelect"
-                    name="model"
-                    data-default-model="transkun"
-                >
-                    <option value="transkun" selected>Transkun</option>
-                    <option value="onsets_and_frames">Onsets and Frames</option>
-                </select>
-            </div>
-        </div>
-
-        <!-- Convert Section -->
-        <div class="section">
-            <h2>Convert to MIDI</h2>
-
-            <button id="convertBtn" type="button">
-                Convert to MIDI
-            </button>
-
-            <div id="transcriptionStatus" class="response">
-                <div id="transcriptionMessage" class="message"></div>
-            </div>
-
-            <a id="downloadMidiLink" href="#" download="transcription.mid" style="display: none;">
-                Download MIDI
-            </a>
-        </div>
-
-        <div id="midiControls" class="midi-controls"></div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.min.js"></script>
-    <script src="../static/model_selector.js"></script>
-    <script src="../static/audio_selector.js"></script>
-    <script src="../static/record.js"></script>
-    <script src="../static/midi_menu.js"></script>
-    <script src="../static/transcription.js"></script>
+    <script type="module">
+        import { init } from "../static/widi_app.js";
+
+        const root = document.getElementById("app");
+        if (root) {
+            init(root);
+        }
+    </script>
 </body>
 </html>
