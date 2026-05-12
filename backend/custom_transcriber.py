@@ -295,14 +295,7 @@ def note_extract(
     frames = (frame_roll > frame_thresh).cpu().int()
 
     onset_events = (
-        torch.cat(
-            [
-                onsets[:1, :],
-                onsets[1:, :] - onsets[:-1, :],
-            ],
-            dim=0,
-        )
-        == 1
+        torch.cat([onsets[:1, :], onsets[1:, :] - onsets[:-1, :]], dim=0) == 1
     ).nonzero()
 
     notes = []
@@ -317,29 +310,19 @@ def note_extract(
         offset = time
         note_velocities = []
 
-        while onsets[offset, note].item() or frames[offset, note].item():
-            if onsets[offset, note].item():
-                note_velocities.append(velocity_roll[offset, note].item())
-
+        while offset < onsets.shape[0] and (
+            onsets[offset, note].item() or frames[offset, note].item()
+        ):
+            # Collect velocity at every active frame, not just onset frames
+            note_velocities.append(velocity_roll[offset, note].item())
             offset += 1
-
-            if offset == onsets.shape[0]:
-                break
 
         if offset > onset:
             notes.append(note)
             intervals.append([onset, offset])
+            velocities.append(np.mean(note_velocities) if note_velocities else 0.5)
 
-            if note_velocities:
-                velocities.append(np.mean(note_velocities))
-            else:
-                velocities.append(0)
-
-    return (
-        np.array(notes),
-        np.array(intervals),
-        np.array(velocities),
-    )
+    return np.array(notes), np.array(intervals), np.array(velocities)
 
 
 def transcribe_with_own_model(
@@ -348,22 +331,14 @@ def transcribe_with_own_model(
     config_override: Optional[dict] = None,
 ) -> Path:
     config = CONFIG_INFERENCE.copy()
-
     if config_override:
         config.update(config_override)
 
     audio_path = Path(audio_path)
     midi_path = Path(midi_path)
-
     midi_path.parent.mkdir(parents=True, exist_ok=True)
 
-    sample_rate = config["sample_rate"]
-
-    audio, sample_rate = librosa.load(
-        str(audio_path),
-        sr=sample_rate,
-        mono=True,
-    )
+    audio, sample_rate = librosa.load(str(audio_path), sr=config["sample_rate"], mono=True)
 
     melspec = MelSpectrogram(
         sample_rate=sample_rate,
@@ -386,7 +361,8 @@ def transcribe_with_own_model(
 
         onset_preds = torch.sigmoid(onset_preds)[0]
         frame_preds = torch.sigmoid(frame_preds)[0]
-        velocity_preds = velocity_preds[0]
+        # Fix: apply sigmoid to velocity logits before use
+        velocity_preds = torch.sigmoid(velocity_preds)[0]
 
     note_preds, interval_preds, velocities = note_extract(
         onset_roll=onset_preds,
@@ -402,28 +378,25 @@ def transcribe_with_own_model(
     note_preds = note_preds + config["pitch_offset"]
 
     midi_obj = pretty_midi.PrettyMIDI()
-
     program = pretty_midi.instrument_name_to_program("Acoustic Grand Piano")
     piano = pretty_midi.Instrument(program=program)
 
     for index in range(len(note_preds)):
         pitch = int(note_preds[index])
-
         onset, offset = interval_preds[index] / config["frame_rate"]
-
         velocity = int(velocities[index])
 
         if offset <= onset:
             offset = onset + 0.01
 
-        midi_note = pretty_midi.Note(
-            velocity=velocity,
-            pitch=pitch,
-            start=float(onset),
-            end=float(offset),
+        piano.notes.append(
+            pretty_midi.Note(
+                velocity=velocity,
+                pitch=pitch,
+                start=float(onset),
+                end=float(offset),
+            )
         )
-
-        piano.notes.append(midi_note)
 
     midi_obj.instruments.append(piano)
     midi_obj.write(str(midi_path))

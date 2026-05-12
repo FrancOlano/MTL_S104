@@ -190,7 +190,7 @@ function getNativeAudioContext() {
     _nativeAudioCtx = new AudioCtx();
   }
   _nativeMasterGain = _nativeAudioCtx.createGain();
-  _nativeMasterGain.gain.value = 0.32;
+  _nativeMasterGain.gain.value = 0.8;
   _nativeMasterGain.connect(_nativeAudioCtx.destination);
   return _nativeAudioCtx;
 }
@@ -1452,7 +1452,7 @@ function _midiTick(content) {
   _midiRaf = requestAnimationFrame(() => _midiTick(content));
 }
 
-async function _midiPlayPause(content) {
+function _midiPlayPause(content) {
   if (state.stage !== 'ready') return;
   if (!state.midiNotes.length) {
     setStatusMessage('The loaded MIDI contains no note events to play.', 'error');
@@ -1460,28 +1460,51 @@ async function _midiPlayPause(content) {
     return;
   }
 
-  try {
-    if (state.midiPlaying) {
-      state.midiPlaying = false;
-      stopNativePlayback();
-      cancelAnimationFrame(_midiRaf);
-    } else {
-      await ensureNativeAudioReady();
-      scheduleNativePlayback(state.midiTime);
-      state.midiPlaying = true;
-      _midiRaf = requestAnimationFrame(() => _midiTick(content));
-    }
-  } catch (error) {
+  if (state.midiPlaying) {
     state.midiPlaying = false;
+    stopNativePlayback();
     cancelAnimationFrame(_midiRaf);
-    setStatusMessage(`Playback error: ${error.message}`, 'error');
+    const btn = content.querySelector('#midi-play');
+    if (btn) {
+      btn.innerHTML = ICON.play(20, 'white');
+      btn.style.boxShadow = `0 0 15px rgba(139,92,246,0.4)`;
+    }
+    return;
+  }
+
+  // Create context synchronously within the click handler
+  let ctx;
+  try {
+    ctx = getNativeAudioContext();
+  } catch (error) {
+    setStatusMessage(`Audio error: ${error.message}`, 'error');
     renderDashboard(content);
     return;
   }
 
-  const btn = content.querySelector('#midi-play');
-  if (btn) { btn.innerHTML = state.midiPlaying ? ICON.pause(20,'white') : ICON.play(20,'white'); btn.style.boxShadow = `0 0 ${state.midiPlaying?30:15}px rgba(139,92,246,${state.midiPlaying?0.7:0.4})`; }
-  _updateSeek(content);
+  const startPlayback = () => {
+    scheduleNativePlayback(state.midiTime);
+    state.midiPlaying = true;
+    _midiRaf = requestAnimationFrame(() => _midiTick(content));
+    const btn = content.querySelector('#midi-play');
+    if (btn) {
+      btn.innerHTML = ICON.pause(20, 'white');
+      btn.style.boxShadow = `0 0 30px rgba(139,92,246,0.7)`;
+    }
+    _updateSeek(content);
+  };
+
+  // If already running start immediately, otherwise resume then start
+  if (ctx.state === 'running') {
+    startPlayback();
+  } else {
+    ctx.resume()
+      .then(startPlayback)
+      .catch(error => {
+        setStatusMessage(`Playback error: ${error.message}`, 'error');
+        renderDashboard(content);
+      });
+  }
 }
 
 function _midiStop(content) {
@@ -1659,6 +1682,9 @@ function _buildDemoMidiBlob() {
 }
 
 async function _loadDemoMidi(content) {
+  // Unlock audio context synchronously on this click
+  try { getNativeAudioContext(); } catch (_) {}
+
   try {
     const demoBlob = _buildDemoMidiBlob();
     await _applyMidiBlob(demoBlob, 'Demo MIDI loaded. Press Play to preview the piano.');
