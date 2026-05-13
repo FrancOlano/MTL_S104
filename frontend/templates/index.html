@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WidiAI</title>
+    <link rel="icon" href="../static/WidiAI_logo.ico">
+</head>
+<body style="margin:0;min-height:100vh;background:#07070f;">
+    <div id="app" style="width:100%;min-height:100vh;"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.min.js"></script>
+    <script type="module">
+        import { init } from "../static/widi_app.js";
+
+        const root = document.getElementById("app");
+        if (root) {
+            init(root);
+        }
+    </script>
+</body>
+</html>
