@@ -7,3 +7,7 @@ checkpoint_50000.pt
 
 venv
 .venv
+
+midi_outputs
+recordings
+uploads

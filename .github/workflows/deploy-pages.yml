@@ -1,0 +1,51 @@
+name: Deploy (GitHub Pages)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: github-pages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build static site
+        run: |
+          rm -rf dist
+          mkdir -p dist/static
+          cp -R frontend/static/* dist/static/
+          cp frontend/templates/index.html dist/index.html
+          python - <<'PY'
+          from pathlib import Path
+
+          index = Path("dist/index.html")
+          html = index.read_text(encoding="utf-8")
+          html = html.replace("../static/", "./static/")
+          index.write_text(html, encoding="utf-8")
+          PY
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
