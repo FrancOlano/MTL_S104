@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.custom_transcriber import transcribe_with_own_model
 
+import shutil
 
 app = FastAPI()
 
@@ -71,48 +72,36 @@ async def save_upload_file(upload_file: UploadFile, destination: Path):
 
 
 def run_transkun(audio_path: Path, output_path: Path):
-    """
-    Run TransKun.
-
-    First tries:
-        transkun input.wav output.mid
-
-    If that command is not found, tries:
-        python -m transkun input.wav output.mid
-    """
-
     audio_path = str(audio_path)
     output_path = str(output_path)
 
+    transkun_bin = shutil.which("transkun")
+
+    if not transkun_bin:
+        # Fallback: common user install location on macOS
+        user_bin = Path.home() / "Library" / "Python" / "3.9" / "bin" / "transkun"
+        if user_bin.exists():
+            transkun_bin = str(user_bin)
+
+    if not transkun_bin:
+        raise RuntimeError(
+            "transkun executable not found. "
+            "Run: pip3 install transkun\n"
+            f"Then verify with: which transkun"
+        )
+
     try:
         subprocess.run(
-            ["transkun", audio_path, output_path],
+            [transkun_bin, audio_path, output_path],
             check=True,
             capture_output=True,
             text=True,
         )
-
-    except FileNotFoundError:
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "transkun", audio_path, output_path],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"TransKun failed:\n{e.stderr or e.stdout}"
-            )
-
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"TransKun failed:\n{e.stderr or e.stdout}"
-        )
+        raise RuntimeError(f"TransKun failed:\n{e.stderr or e.stdout}")
 
     if not Path(output_path).exists():
         raise RuntimeError("TransKun finished but no MIDI file was created.")
-
 
 
 @app.post("/transcribe")
@@ -121,14 +110,6 @@ async def transcribe_audio(
     audio: UploadFile = File(...),
     model_name: str = Form(..., alias="model"),
 ):
-    """
-    Convert uploaded audio to MIDI.
-
-    Required form-data:
-        audio: audio file
-        model: own OR transkun
-    """
-
     selected_model = model_name.strip().lower()
 
     if selected_model not in {"own", "transkun"}:
@@ -139,14 +120,9 @@ async def transcribe_audio(
 
     original_suffix = Path(audio.filename or "input.wav").suffix.lower()
     allowed_suffixes = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
-
-    if original_suffix in allowed_suffixes:
-        suffix = original_suffix
-    else:
-        suffix = ".wav"
+    suffix = original_suffix if original_suffix in allowed_suffixes else ".wav"
 
     job_id = uuid.uuid4().hex
-
     input_path = UPLOADS_DIR / f"{job_id}{suffix}"
     output_path = MIDI_DIR / f"{job_id}_{selected_model}.mid"
 
@@ -154,37 +130,23 @@ async def transcribe_audio(
         await save_upload_file(audio, input_path)
 
         if selected_model == "own":
-            await run_in_threadpool(
-                transcribe_with_own_model,
-                input_path,
-                output_path,
-            )
+            await run_in_threadpool(transcribe_with_own_model, input_path, output_path)
         else:
-            await run_in_threadpool(
-                run_transkun,
-                input_path,
-                output_path,
-            )
+            await run_in_threadpool(run_transkun, input_path, output_path)
 
-        background_tasks.add_task(
-            cleanup_files,
-            [str(input_path), str(output_path)],
-        )
+        # Only register cleanup once, via background_tasks — do NOT also pass
+        # background_tasks to FileResponse or the tasks run twice.
+        background_tasks.add_task(cleanup_files, [str(input_path), str(output_path)])
 
         return FileResponse(
             path=str(output_path),
             media_type="audio/midi",
             filename=f"transcription_{selected_model}.mid",
-            background=background_tasks,
         )
 
     except Exception as e:
         cleanup_files([str(input_path), str(output_path)])
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
-
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/upload-audio")
