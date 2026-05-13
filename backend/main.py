@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
-import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -15,8 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from backend.custom_transcriber import transcribe_with_own_model
-
-import shutil
 
 app = FastAPI()
 
@@ -75,19 +73,19 @@ def run_transkun(audio_path: Path, output_path: Path):
     audio_path = str(audio_path)
     output_path = str(output_path)
 
-    transkun_bin = shutil.which("transkun")
+    # Prefer the transkun binary from the same Python environment as this API.
+    # This avoids picking unrelated global installs (e.g. conda/base).
+    env_transkun = Path(sys.executable).with_name("transkun")
+    transkun_bin = str(env_transkun) if env_transkun.exists() else None
 
+    # Fallback to PATH only if local environment does not provide transkun.
     if not transkun_bin:
-        # Fallback: common user install location on macOS
-        user_bin = Path.home() / "Library" / "Python" / "3.9" / "bin" / "transkun"
-        if user_bin.exists():
-            transkun_bin = str(user_bin)
+        transkun_bin = shutil.which("transkun")
 
     if not transkun_bin:
         raise RuntimeError(
-            "transkun executable not found. "
-            "Run: pip3 install transkun\n"
-            f"Then verify with: which transkun"
+            "transkun executable not found in current environment. "
+            "Activate your project venv and run: pip install transkun"
         )
 
     try:
@@ -98,7 +96,14 @@ def run_transkun(audio_path: Path, output_path: Path):
             text=True,
         )
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"TransKun failed:\n{e.stderr or e.stdout}")
+        stderr = e.stderr or e.stdout or ""
+        if "No module named 'audioop'" in stderr or "No module named 'pyaudioop'" in stderr:
+            raise RuntimeError(
+                "TransKun dependency error (audioop/pyaudioop). "
+                "Use a compatible Python environment for transkun "
+                "(or install audioop-lts/pyaudioop in that environment)."
+            )
+        raise RuntimeError(f"TransKun failed:\n{stderr}")
 
     if not Path(output_path).exists():
         raise RuntimeError("TransKun finished but no MIDI file was created.")

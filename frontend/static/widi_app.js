@@ -52,17 +52,6 @@ const ICON = {
 
 const DEFAULT_TOTAL_DURATION = 48;
 
-function buildWaveform() {
-  let s = 42;
-  const rand = () => { s = (Math.imul(s, 1664525) + 1013904223) | 0; return (s >>> 0) / 0xffffffff; };
-  return Array.from({ length: 220 }, (_, i) => {
-    const t = i / 220;
-    return Math.min(1, Math.max(0.04,
-      Math.abs(Math.sin(t * Math.PI * 14) * 0.38 + Math.sin(t * Math.PI * 37) * 0.28 +
-        Math.sin(t * Math.PI * 89) * 0.18 + (rand() - 0.5) * 0.16)));
-  });
-}
-
 function buildMidi() {
   const notes = [], beat = 0.5;
   const chords = [
@@ -85,7 +74,6 @@ function buildMidi() {
   return notes;
 }
 
-const WAVEFORM = buildWaveform();
 const MIDI_NOTES = buildMidi();
 
 const HISTORY = [
@@ -145,6 +133,7 @@ let _recTimer = null, _progressTimer = null;
 let _mediaRecorder = null, _audioChunks = [];
 let _audioUrlRef = null;
 let _pianoRoll = null, _audioPlayer = null, _waveform = null;
+let _recordWaveCtx = null, _recordWaveAnalyser = null, _recordWaveSource = null, _recordWaveData = null, _recordWaveRaf = 0;
 let _nativeAudioCtx = null, _nativeMasterGain = null;
 let _nativeTimers = [], _nativeNodes = new Set();
 let _nativeStartPerf = 0, _nativeStartOffset = 0;
@@ -311,6 +300,70 @@ function scheduleNativePlayback(fromSec) {
 
   _nativeStartPerf = performance.now();
   _nativeStartOffset = fromSec;
+}
+
+function _stopRecordingWaveform() {
+  if (_recordWaveRaf) {
+    cancelAnimationFrame(_recordWaveRaf);
+    _recordWaveRaf = 0;
+  }
+  if (_recordWaveSource) {
+    try { _recordWaveSource.disconnect(); } catch (_) {}
+    _recordWaveSource = null;
+  }
+  if (_recordWaveAnalyser) {
+    try { _recordWaveAnalyser.disconnect(); } catch (_) {}
+    _recordWaveAnalyser = null;
+  }
+  if (_recordWaveCtx) {
+    try { _recordWaveCtx.close(); } catch (_) {}
+    _recordWaveCtx = null;
+  }
+  _recordWaveData = null;
+}
+
+function _renderRecordingWaveformFrame() {
+  if (!state.isRecording || !_waveform || !_recordWaveAnalyser || !_recordWaveData) return;
+
+  _recordWaveAnalyser.getByteTimeDomainData(_recordWaveData);
+  const bars = 110;
+  const chunkSize = Math.max(1, Math.floor(_recordWaveData.length / bars));
+  const levels = new Array(bars);
+
+  for (let i = 0; i < bars; i += 1) {
+    let peak = 0;
+    const start = i * chunkSize;
+    const end = Math.min(_recordWaveData.length, start + chunkSize);
+    for (let j = start; j < end; j += 1) {
+      const normalized = (_recordWaveData[j] - 128) / 128;
+      const amp = Math.abs(normalized);
+      if (amp > peak) peak = amp;
+    }
+    levels[i] = Math.min(1, Math.max(0.02, peak * 1.9));
+  }
+
+  _waveform.update(levels, 0, 1, true);
+  _recordWaveRaf = requestAnimationFrame(_renderRecordingWaveformFrame);
+}
+
+function _startRecordingWaveform(stream) {
+  _stopRecordingWaveform();
+
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx || !stream) return;
+
+  try {
+    _recordWaveCtx = new AudioCtx();
+    _recordWaveAnalyser = _recordWaveCtx.createAnalyser();
+    _recordWaveAnalyser.fftSize = 2048;
+    _recordWaveSource = _recordWaveCtx.createMediaStreamSource(stream);
+    _recordWaveSource.connect(_recordWaveAnalyser);
+    _recordWaveData = new Uint8Array(_recordWaveAnalyser.fftSize);
+    _renderRecordingWaveformFrame();
+  } catch (error) {
+    console.error('Waveform setup error:', error);
+    _stopRecordingWaveform();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1183,6 +1236,7 @@ function destroyInstances() {
   if (_pianoRoll) { _pianoRoll.destroy(); _pianoRoll = null; }
   if (_audioPlayer) { _audioPlayer.destroy(); _audioPlayer = null; }
   if (_waveform) { _waveform.destroy(); _waveform = null; }
+  _stopRecordingWaveform();
   stopNativePlayback();
   cancelAnimationFrame(_midiRaf);
   state.midiPlaying = false;
@@ -1214,7 +1268,7 @@ function renderDashboard(content) {
             </div>
           </div>
           ${state.fileName ? `<div class="w-file-badge w-fade-in" style="margin-bottom:12px;">${ICON.checkCircle(11,'#10b981')} <span style="font-size:11px;color:#6ee7b7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${state.fileName}</span></div>` : ''}
-          <div class="w-waveform" id="wf-wrap"></div>
+          ${state.isRecording ? '<div class="w-waveform" id="wf-wrap"></div>' : ''}
           <div id="ap-wrap"></div>
         </div>
 
@@ -1336,7 +1390,6 @@ function renderDashboard(content) {
   // Init canvas instances
   const wfWrap = content.querySelector('#wf-wrap');
   if (wfWrap) _waveform = new Waveform(wfWrap);
-  if (_waveform && state.stage !== 'idle') _waveform.update(WAVEFORM, state.midiTime, playbackDuration, state.isRecording);
 
   const pianoBody = content.querySelector('#piano-body');
   if (pianoBody) {
@@ -1403,7 +1456,6 @@ function renderDashboard(content) {
   content.querySelector('#midi-seek').addEventListener('input', e => {
     state.midiTime = parseFloat(e.target.value);
     if (_pianoRoll) _pianoRoll.setTime(state.midiTime);
-    if (_waveform) _waveform.update(WAVEFORM, state.midiTime, getMidiDuration(), state.isRecording);
     if (state.midiPlaying) {
       scheduleNativePlayback(state.midiTime);
     }
@@ -1436,7 +1488,6 @@ function _updateSeek(content) {
     _pianoRoll.setPlaying(state.midiPlaying);
     _pianoRoll.setEditMode(state.noteEditMode && state.stage === 'ready' && !state.midiPlaying);
   }
-  if (_waveform) _waveform.update(state.stage !== 'idle' ? WAVEFORM : [], state.midiTime, duration, state.isRecording);
 }
 
 function _midiTick(content) {
@@ -1716,6 +1767,7 @@ async function _handleRecord() {
   const content = document.getElementById('w-content');
   if (state.isRecording) {
     if (_mediaRecorder && _mediaRecorder.state !== 'inactive') _mediaRecorder.stop();
+    _stopRecordingWaveform();
     state.isRecording = false;
     if (_recTimer) clearTimeout(_recTimer);
   } else {
@@ -1728,6 +1780,7 @@ async function _handleRecord() {
 
       _mediaRecorder.ondataavailable = e => { if (e.data.size > 0) _audioChunks.push(e.data); };
       _mediaRecorder.onstop = () => {
+        _stopRecordingWaveform();
         stream.getTracks().forEach(t => t.stop());
         const blobType = _mediaRecorder.mimeType || mimeType || 'audio/webm';
         const blob = new Blob(_audioChunks, { type: blobType });
@@ -1748,6 +1801,9 @@ async function _handleRecord() {
       state.isRecording = true;
       state.stage = 'idle';
       clearStatusMessage();
+      renderDashboard(content);
+      _startRecordingWaveform(stream);
+      return;
     } catch (error) {
       state.isRecording = false;
       setStatusMessage(`Microphone error: ${error.message}`, 'error');
@@ -1759,6 +1815,7 @@ async function _handleRecord() {
 async function _handleUpload(e) {
   const file = e.target.files?.[0]; if (!file) return;
   if (_mediaRecorder && _mediaRecorder.state !== 'inactive') _mediaRecorder.stop();
+  _stopRecordingWaveform();
   state.isRecording = false;
   if (_recTimer) clearTimeout(_recTimer);
   if (_audioUrlRef) URL.revokeObjectURL(_audioUrlRef);
