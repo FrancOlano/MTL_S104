@@ -75,7 +75,8 @@ def run_transkun(audio_path: Path, output_path: Path):
     audio_path = str(audio_path)
     output_path = str(output_path)
 
-    transkun_bin = shutil.which("transkun")
+    venv_scripts = Path(sys.executable).resolve().parent
+    transkun_bin = shutil.which("transkun", path=str(venv_scripts)) or shutil.which("transkun")
 
     if not transkun_bin:
         # Fallback: common user install location on macOS
@@ -90,12 +91,28 @@ def run_transkun(audio_path: Path, output_path: Path):
             f"Then verify with: which transkun"
         )
 
+    env = os.environ.copy()
+    path_entries = [str(venv_scripts)]
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    ffprobe_bin = shutil.which("ffprobe")
+    if not ffmpeg_bin or not ffprobe_bin:
+        winget_packages = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+        for candidate in winget_packages.glob("Gyan.FFmpeg_*/*/bin"):
+            if (candidate / "ffmpeg.exe").exists() and (candidate / "ffprobe.exe").exists():
+                path_entries.append(str(candidate))
+                break
+
+    path_entries.append(env.get("PATH", ""))
+    env["PATH"] = os.pathsep.join(path_entries)
+
     try:
         subprocess.run(
             [transkun_bin, audio_path, output_path],
             check=True,
             capture_output=True,
             text=True,
+            env=env,
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"TransKun failed:\n{e.stderr or e.stdout}")
